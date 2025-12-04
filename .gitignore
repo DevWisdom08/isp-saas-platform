@@ -36,3 +36,4 @@ coverage.html
 
 # Vendor (if not committed)
 # /vendor/
+*.tar.gz
