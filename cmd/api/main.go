@@ -20,7 +20,7 @@ func main() {
 
     // Initialize logger
     log := logger.New()
-    log.Info("Starting ISP SaaS Platform API...")
+    log.Info("Starting ISP SaaS Platform API v1.0.0...")
 
     // Connect to database
     db, err := database.Connect()
@@ -42,29 +42,40 @@ func main() {
     // Create router
     r := mux.NewRouter()
 
-    // Public routes (no auth required)
+    // ============== PUBLIC ROUTES (No Auth) ==============
     r.HandleFunc("/api/health", h.HealthCheck).Methods("GET")
     r.HandleFunc("/api/auth/login", h.Login).Methods("POST")
     r.HandleFunc("/api/auth/register", h.Register).Methods("POST")
     r.HandleFunc("/api/plans", h.GetPlans).Methods("GET")
     r.HandleFunc("/api/plans/{id}", h.GetPlan).Methods("GET")
-    
+
     // Agent routes (license-based auth)
     r.HandleFunc("/api/licenses/validate", h.ValidateLicense).Methods("POST")
     r.HandleFunc("/api/telemetry", h.SubmitTelemetry).Methods("POST")
+    r.HandleFunc("/api/logs", h.CreateSystemLog).Methods("POST")
 
-    // Protected routes (JWT auth required)
+    // ============== PROTECTED ROUTES (JWT Auth) ==============
     api := r.PathPrefix("/api").Subrouter()
     api.Use(middleware.AuthMiddleware)
 
     // Auth
     api.HandleFunc("/auth/refresh", h.RefreshToken).Methods("POST")
 
+    // Dashboard
+    api.HandleFunc("/dashboard/stats", h.GetDashboardStats).Methods("GET")
+
     // Users
     api.HandleFunc("/users", h.GetUsers).Methods("GET")
     api.HandleFunc("/users/{id}", h.GetUser).Methods("GET")
     api.HandleFunc("/users/{id}", h.UpdateUser).Methods("PUT")
     api.HandleFunc("/users/{id}", h.DeleteUser).Methods("DELETE")
+
+    // Distributors
+    api.HandleFunc("/distributors", h.GetDistributors).Methods("GET")
+    api.HandleFunc("/distributors", h.CreateDistributor).Methods("POST")
+    api.HandleFunc("/distributors/{id}", h.GetDistributor).Methods("GET")
+    api.HandleFunc("/distributors/{id}", h.UpdateDistributor).Methods("PUT")
+    api.HandleFunc("/distributors/{id}/isps", h.GetDistributorISPs).Methods("GET")
 
     // ISPs
     api.HandleFunc("/isps", h.GetISPs).Methods("GET")
@@ -91,6 +102,16 @@ func main() {
     api.HandleFunc("/invoices/{id}/pay", h.MarkInvoicePaid).Methods("POST")
     api.HandleFunc("/invoices/check-overdue", h.CheckOverdueInvoices).Methods("POST")
 
+    // System Logs
+    api.HandleFunc("/logs", h.GetSystemLogs).Methods("GET")
+    api.HandleFunc("/logs/stats", h.GetLogStats).Methods("GET")
+    api.HandleFunc("/logs/cleanup", h.DeleteOldLogs).Methods("DELETE")
+
+    // Settings
+    api.HandleFunc("/settings", h.GetSettings).Methods("GET")
+    api.HandleFunc("/settings/get", h.GetSetting).Methods("GET")
+    api.HandleFunc("/settings/update", h.UpdateSetting).Methods("PUT")
+
     // CORS configuration
     c := cors.New(cors.Options{
         AllowedOrigins:   []string{"*"},
@@ -115,6 +136,8 @@ func main() {
     }
 
     log.Info("Server starting", "port", port)
+    log.Info("API Endpoints ready", "total", "40+")
+    
     if err := srv.ListenAndServe(); err != nil {
         log.Fatal("Server failed", "error", err)
     }
