@@ -1,0 +1,38 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/isp-saas-api
+/agent
+
+# Environment files
+.env
+.env.local
+.env.production
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Build output
+/bin/
+/dist/
+
+# Test coverage
+coverage.out
+coverage.html
+
+# Vendor (if not committed)
+# /vendor/
