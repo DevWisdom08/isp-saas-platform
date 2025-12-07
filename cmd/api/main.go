@@ -12,14 +12,16 @@ import (
     "isp-saas.com/platform/internal/middleware"
     "isp-saas.com/platform/pkg/database"
     "isp-saas.com/platform/pkg/logger"
+    "isp-saas.com/platform/pkg/redis"
 )
 
 func main() {
     godotenv.Load()
 
     log := logger.New()
-    log.Info("Starting ISP SaaS Platform API v1.1.0...")
+    log.Info("Starting ISP SaaS Platform API v1.2.0...")
 
+    // Connect to database
     db, err := database.Connect()
     if err != nil {
         log.Fatal("Failed to connect to database", "error", err)
@@ -27,13 +29,33 @@ func main() {
     defer db.Close()
     log.Info("Database connected successfully")
 
+    // Connect to Redis
+    redisClient, err := redis.Connect()
+    if err != nil {
+        log.Warn("Redis not available, running without caching", "error", err)
+        redisClient = nil
+    } else {
+        log.Info("Redis connected successfully")
+        defer redisClient.Close()
+    }
+
+    // Run migrations
     if err := db.RunMigrations("./migrations"); err != nil {
         log.Fatal("Failed to run migrations", "error", err)
     }
     log.Info("Migrations completed")
 
+    // Initialize handlers
     h := handlers.New(db, log)
+
+    // Create router
     r := mux.NewRouter()
+
+    // Rate limiter (100 requests per minute)
+    rateLimiter := middleware.NewRateLimiter(redisClient, 100, time.Minute)
+
+    // Apply rate limiting to all routes
+    r.Use(rateLimiter.Middleware)
 
     // ============== PUBLIC ROUTES ==============
     r.HandleFunc("/api/health", h.HealthCheck).Methods("GET")
@@ -42,7 +64,7 @@ func main() {
     r.HandleFunc("/api/plans", h.GetPlans).Methods("GET")
     r.HandleFunc("/api/plans/{id}", h.GetPlan).Methods("GET")
 
-    // Agent routes (public for agents)
+    // Agent routes
     r.HandleFunc("/api/licenses/validate", h.ValidateLicense).Methods("POST")
     r.HandleFunc("/api/telemetry", h.SubmitTelemetry).Methods("POST")
     r.HandleFunc("/api/logs", h.CreateSystemLog).Methods("POST")
@@ -55,10 +77,10 @@ func main() {
     // Auth
     api.HandleFunc("/auth/refresh", h.RefreshToken).Methods("POST")
 
-    // Dashboard (role-aware)
+    // Dashboard
     api.HandleFunc("/dashboard/stats", h.GetDashboardStats).Methods("GET")
 
-    // Top Sites & Apps (NEW)
+    // Top Sites & Apps
     api.HandleFunc("/sites/top", h.GetTopSites).Methods("GET")
     api.HandleFunc("/apps/top", h.GetTopApps).Methods("GET")
     api.HandleFunc("/apps/categories", h.GetAppCategories).Methods("GET")
@@ -95,11 +117,13 @@ func main() {
 
     // Telemetry
     api.HandleFunc("/telemetry/stats", h.GetTelemetryStats).Methods("GET")
+    api.HandleFunc("/telemetry/history", h.GetTelemetryHistory).Methods("GET")
 
     // Billing
     api.HandleFunc("/invoices", h.GetInvoices).Methods("GET")
     api.HandleFunc("/invoices", h.CreateInvoice).Methods("POST")
     api.HandleFunc("/invoices/{id}/pay", h.MarkInvoicePaid).Methods("POST")
+    api.HandleFunc("/invoices/{id}/pdf", h.GenerateInvoicePDF).Methods("GET")
     api.HandleFunc("/invoices/check-overdue", h.CheckOverdueInvoices).Methods("POST")
 
     // System Logs
@@ -134,7 +158,7 @@ func main() {
     }
 
     log.Info("Server starting", "port", port)
-    log.Info("New endpoints: /api/sites/top, /api/apps/top, /api/isps/{id}/dashboard")
+    log.Info("Features: Redis caching, Rate limiting, PDF export")
 
     if err := srv.ListenAndServe(); err != nil {
         log.Fatal("Server failed", "error", err)

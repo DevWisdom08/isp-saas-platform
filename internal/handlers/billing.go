@@ -2,7 +2,9 @@ package handlers
 
 import (
     "encoding/json"
+    "fmt"
     "net/http"
+    "strings"
     "time"
 
     "github.com/gorilla/mux"
@@ -184,9 +186,7 @@ func (h *Handler) MarkInvoicePaid(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    _, err := h.db.Exec(`
-        UPDATE invoices SET status = 'paid', paid_at = NOW() WHERE id = $1
-    `, id)
+    _, err := h.db.Exec(`UPDATE invoices SET status = 'paid', paid_at = NOW() WHERE id = $1`, id)
 
     if err != nil {
         h.sendJSON(w, http.StatusInternalServerError, Response{Success: false, Error: "Failed to update invoice"})
@@ -215,12 +215,9 @@ func (h *Handler) CheckOverdueInvoices(w http.ResponseWriter, r *http.Request) {
 
     rows, _ := result.RowsAffected()
 
-    _, err = h.db.Exec(`
+    h.db.Exec(`
         UPDATE isps SET status = 'suspended' 
-        WHERE id IN (
-            SELECT DISTINCT isp_id FROM invoices 
-            WHERE status = 'overdue'
-        ) AND status = 'active'
+        WHERE id IN (SELECT DISTINCT isp_id FROM invoices WHERE status = 'overdue') AND status = 'active'
     `)
 
     h.logger.Info("Overdue invoices checked", "updated", rows)
@@ -229,4 +226,118 @@ func (h *Handler) CheckOverdueInvoices(w http.ResponseWriter, r *http.Request) {
         Message: "Overdue invoices processed",
         Data:    map[string]int64{"invoices_marked_overdue": rows},
     })
+}
+
+func (h *Handler) GenerateInvoicePDF(w http.ResponseWriter, r *http.Request) {
+    vars := mux.Vars(r)
+    id := vars["id"]
+
+    var invoiceID int
+    var ispID int
+    var amount float64
+    var status, dueDate, createdAt string
+
+    err := h.db.QueryRow(`
+        SELECT inv.id, inv.isp_id, inv.amount, inv.status, inv.due_date, inv.created_at
+        FROM invoices inv WHERE inv.id = $1
+    `, id).Scan(&invoiceID, &ispID, &amount, &status, &dueDate, &createdAt)
+
+    if err != nil {
+        h.sendJSON(w, http.StatusNotFound, Response{Success: false, Error: "Invoice not found"})
+        return
+    }
+
+    var ispName, serverIP string
+    h.db.QueryRow("SELECT name, server_ip FROM isps WHERE id = $1", ispID).Scan(&ispName, &serverIP)
+
+    var planName string
+    h.db.QueryRow(`SELECT p.name FROM plans p JOIN isps i ON i.plan_id = p.id WHERE i.id = $1`, ispID).Scan(&planName)
+    if planName == "" {
+        planName = "Standard"
+    }
+
+    html := fmt.Sprintf(`<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Invoice #INV-%d</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; color: #333; }
+        .header { display: flex; justify-content: space-between; margin-bottom: 40px; border-bottom: 2px solid #3b82f6; padding-bottom: 20px; }
+        .logo { font-size: 28px; font-weight: bold; color: #3b82f6; }
+        .invoice-info { text-align: right; }
+        .invoice-number { font-size: 24px; font-weight: bold; color: #1e293b; }
+        .details { display: flex; justify-content: space-between; margin-bottom: 40px; }
+        .bill-to, .from { width: 45%%; }
+        .section-title { font-weight: bold; color: #666; margin-bottom: 10px; text-transform: uppercase; font-size: 12px; }
+        table { width: 100%%; border-collapse: collapse; margin-bottom: 40px; }
+        th { background: #3b82f6; color: white; padding: 12px; text-align: left; }
+        td { padding: 12px; border-bottom: 1px solid #e2e8f0; }
+        .total-row { background: #f8fafc; font-weight: bold; font-size: 18px; }
+        .status { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: bold; }
+        .status.paid { background: #d1fae5; color: #059669; }
+        .status.pending { background: #fef3c7; color: #d97706; }
+        .status.overdue { background: #fee2e2; color: #dc2626; }
+        .footer { margin-top: 60px; text-align: center; color: #666; font-size: 12px; border-top: 1px solid #e2e8f0; padding-top: 20px; }
+        @media print { body { margin: 20px; } }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="logo">🚀 ISP SaaS Platform</div>
+        <div class="invoice-info">
+            <div class="invoice-number">INVOICE #INV-%d</div>
+            <div>Date: %s</div>
+            <div>Due: %s</div>
+            <div style="margin-top: 10px;"><span class="status %s">%s</span></div>
+        </div>
+    </div>
+    
+    <div class="details">
+        <div class="bill-to">
+            <div class="section-title">Bill To:</div>
+            <div style="font-size: 18px; font-weight: bold;">%s</div>
+            <div>Server: %s</div>
+        </div>
+        <div class="from">
+            <div class="section-title">From:</div>
+            <div style="font-size: 18px; font-weight: bold;">ISP SaaS Platform</div>
+            <div>Cache Management Services</div>
+        </div>
+    </div>
+    
+    <table>
+        <thead>
+            <tr>
+                <th>Description</th>
+                <th>Plan</th>
+                <th>Period</th>
+                <th style="text-align: right;">Amount</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>ISP Cache Service - Monthly Subscription</td>
+                <td>%s</td>
+                <td>1 Month</td>
+                <td style="text-align: right;">$%.2f</td>
+            </tr>
+            <tr class="total-row">
+                <td colspan="3" style="text-align: right;">TOTAL:</td>
+                <td style="text-align: right;">$%.2f USD</td>
+            </tr>
+        </tbody>
+    </table>
+    
+    <div class="footer">
+        <p><strong>Thank you for your business!</strong></p>
+        <p>ISP SaaS Platform - Professional Cache Management Services</p>
+        <p style="margin-top: 20px;">To print this invoice, press Ctrl+P (or Cmd+P on Mac)</p>
+    </div>
+</body>
+</html>`, invoiceID, invoiceID, createdAt[:10], dueDate[:10], strings.ToLower(status), strings.ToUpper(status), 
+       ispName, serverIP, planName, amount, amount)
+
+    w.Header().Set("Content-Type", "text/html; charset=utf-8")
+    w.Write([]byte(html))
 }

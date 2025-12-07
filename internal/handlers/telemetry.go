@@ -179,3 +179,99 @@ func (h *Handler) GetISPTelemetry(w http.ResponseWriter, r *http.Request) {
 
     h.sendJSON(w, http.StatusOK, Response{Success: true, Data: stats})
 }
+
+// GetTelemetryHistory returns time-series telemetry data for charts
+func (h *Handler) GetTelemetryHistory(w http.ResponseWriter, r *http.Request) {
+    claims := middleware.GetUserFromContext(r)
+    ispID := r.URL.Query().Get("isp_id")
+    hours := r.URL.Query().Get("hours")
+    if hours == "" {
+        hours = "24"
+    }
+
+    var query string
+    var args []interface{}
+
+    if claims.Role == "admin" {
+        if ispID != "" {
+            query = `
+                SELECT 
+                    date_trunc('hour', created_at) as time_bucket,
+                    SUM(cache_hits) as hits,
+                    SUM(cache_misses) as misses,
+                    SUM(bandwidth_saved_mb) as bandwidth_saved,
+                    AVG(cpu_usage) as avg_cpu,
+                    AVG(memory_usage) as avg_memory
+                FROM telemetry 
+                WHERE isp_id = $1 AND created_at > NOW() - INTERVAL '1 hour' * $2
+                GROUP BY time_bucket
+                ORDER BY time_bucket ASC
+            `
+            args = []interface{}{ispID, hours}
+        } else {
+            query = `
+                SELECT 
+                    date_trunc('hour', created_at) as time_bucket,
+                    SUM(cache_hits) as hits,
+                    SUM(cache_misses) as misses,
+                    SUM(bandwidth_saved_mb) as bandwidth_saved,
+                    AVG(cpu_usage) as avg_cpu,
+                    AVG(memory_usage) as avg_memory
+                FROM telemetry 
+                WHERE created_at > NOW() - INTERVAL '1 hour' * $1
+                GROUP BY time_bucket
+                ORDER BY time_bucket ASC
+            `
+            args = []interface{}{hours}
+        }
+    } else {
+        query = `
+            SELECT 
+                date_trunc('hour', t.created_at) as time_bucket,
+                SUM(t.cache_hits) as hits,
+                SUM(t.cache_misses) as misses,
+                SUM(t.bandwidth_saved_mb) as bandwidth_saved,
+                AVG(t.cpu_usage) as avg_cpu,
+                AVG(t.memory_usage) as avg_memory
+            FROM telemetry t
+            JOIN isps i ON t.isp_id = i.id
+            WHERE i.user_id = $1 AND t.created_at > NOW() - INTERVAL '1 hour' * $2
+            GROUP BY time_bucket
+            ORDER BY time_bucket ASC
+        `
+        args = []interface{}{claims.UserID, hours}
+    }
+
+    rows, err := h.db.Query(query, args...)
+    if err != nil {
+        h.sendJSON(w, http.StatusInternalServerError, Response{Success: false, Error: "Database error"})
+        return
+    }
+    defer rows.Close()
+
+    type DataPoint struct {
+        Time           string  `json:"time"`
+        Hits           int64   `json:"hits"`
+        Misses         int64   `json:"misses"`
+        BandwidthSaved int64   `json:"bandwidth_saved"`
+        AvgCPU         float64 `json:"avg_cpu"`
+        AvgMemory      float64 `json:"avg_memory"`
+        HitRate        float64 `json:"hit_rate"`
+    }
+
+    var data []DataPoint
+    for rows.Next() {
+        var dp DataPoint
+        rows.Scan(&dp.Time, &dp.Hits, &dp.Misses, &dp.BandwidthSaved, &dp.AvgCPU, &dp.AvgMemory)
+        if dp.Hits+dp.Misses > 0 {
+            dp.HitRate = float64(dp.Hits) / float64(dp.Hits+dp.Misses) * 100
+        }
+        data = append(data, dp)
+    }
+
+    if data == nil {
+        data = []DataPoint{}
+    }
+
+    h.sendJSON(w, http.StatusOK, Response{Success: true, Data: data})
+}
