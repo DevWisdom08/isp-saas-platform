@@ -136,6 +136,15 @@ func main() {
     api.HandleFunc("/settings/get", h.GetSetting).Methods("GET")
     api.HandleFunc("/settings/update", h.UpdateSetting).Methods("PUT")
 
+
+	// Agent Versions (admin only)
+	api.HandleFunc("/agent/versions", h.GetAgentVersions).Methods("GET")
+	api.HandleFunc("/agent/versions", h.CreateAgentVersion).Methods("POST")
+
+	// Agent Versions (public endpoint for agents to check updates)
+	r.HandleFunc("/api/agent/version/latest", h.GetLatestAgentVersion).Methods("GET")
+	
+	// Protected Agent Version Management (admin only)
     // CORS
     c := cors.New(cors.Options{
         AllowedOrigins:   []string{"*"},
