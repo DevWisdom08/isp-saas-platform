@@ -100,10 +100,12 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 
     if len(req.Password) < 8 {
         h.sendJSON(w, http.StatusBadRequest, Response{Success: false, Error: "Password must be at least 8 characters"})
+
+    // Validate password strength
+    if err := ValidatePassword(req.Password); err != nil {
+        h.sendJSON(w, http.StatusBadRequest, Response{Success: false, Error: err.Error()})
         return
     }
-
-    if req.Role == "" {
         req.Role = "isp"
     }
 

@@ -146,11 +146,14 @@ func main() {
 	
 	// Protected Agent Version Management (admin only)
     // CORS
+    // CORS - Restricted to specific origins
     c := cors.New(cors.Options{
-        AllowedOrigins:   []string{"*"},
+        AllowedOrigins:   []string{"http://64.23.151.140", "http://localhost:8080"},
         AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
         AllowedHeaders:   []string{"Authorization", "Content-Type"},
         AllowCredentials: true,
+        MaxAge:           300,
+    })
     })
 
     port := os.Getenv("PORT")
