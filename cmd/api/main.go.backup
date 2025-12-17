@@ -108,8 +108,6 @@ func main() {
     api.HandleFunc("/isps/{id}/activate", h.ActivateISP).Methods("POST")
     api.HandleFunc("/isps/{id}/telemetry", h.GetISPTelemetry).Methods("GET")
     api.HandleFunc("/isps/{id}/dashboard", h.GetISPDashboard).Methods("GET")
-    api.HandleFunc("/isps/{id}/commercial", h.GetISPCommercialStats).Methods("GET")
-    api.HandleFunc("/isps/{id}/commercial/config", h.UpdateISPCommercialConfig).Methods("PUT")
 
     // Licenses
     api.HandleFunc("/licenses", h.GetLicenses).Methods("GET")
@@ -155,6 +153,7 @@ func main() {
         AllowedHeaders:   []string{"Authorization", "Content-Type"},
         AllowCredentials: true,
         MaxAge:           300,
+    })
     })
 
     port := os.Getenv("PORT")
