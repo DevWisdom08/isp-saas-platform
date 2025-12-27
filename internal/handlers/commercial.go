@@ -69,19 +69,30 @@ func (h *Handler) GetISPCommercialStats(w http.ResponseWriter, r *http.Request) 
 		hitRate = float64(telemetry.CacheHits) / float64(totalRequests) * 100
 	}
 
-	// Calculate bandwidth saved in Mbps
+	// Calculate bandwidth saved in Mbps (extrapolated to monthly average)
+	// We take last 30 days of data and calculate average Mbps
 	bandwidthSavedMbps := 0.0
+	monthlySavedGB := 0.0
 	if telemetry.BandwidthSavedMB > 0 {
-		bandwidthSavedMbps = (telemetry.BandwidthSavedMB * 8) / (30 * 24 * 3600)
+		// Convert MB to GB
+		monthlySavedGB = telemetry.BandwidthSavedMB / 1024.0
+		// Convert to Mbps: (GB * 8 bits * 1024 MB) / (30 days * 24 hours * 3600 seconds)
+		bandwidthSavedMbps = (monthlySavedGB * 8 * 1024) / (30 * 24 * 3600)
 	}
 
 	// Calculate traffic metrics
 	peakTrafficWithCache := float64(isp.PeakTrafficMbps)
-	if peakTrafficWithCache == 0 && hitRate > 0 {
-		peakTrafficWithCache = bandwidthSavedMbps / (hitRate / 100)
-	}
+	peakTrafficWithoutCache := peakTrafficWithCache
 
-	peakTrafficWithoutCache := peakTrafficWithCache + bandwidthSavedMbps
+	// If we have monthly bandwidth baseline, calculate reduction
+	if isp.MonthlyBandwidthGB > 0 && hitRate > 0 {
+		// Estimate savings: monthly_bandwidth * hit_rate%
+		estimatedSavingsGB := float64(isp.MonthlyBandwidthGB) * (hitRate / 100)
+		// Convert to Mbps
+		bandwidthSavedMbps = (estimatedSavingsGB * 8 * 1024) / (30 * 24 * 3600)
+		peakTrafficWithoutCache = float64(isp.PeakTrafficMbps)
+		peakTrafficWithCache = peakTrafficWithoutCache * (1 - hitRate/100)
+	}
 
 	// Calculate USD savings
 	monthlySavingsUSD := bandwidthSavedMbps * isp.CostPerMbps
